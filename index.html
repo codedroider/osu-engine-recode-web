@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en"> <!-- your lang here -->
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title> </title> <!-- title -->
+    <style>
+        * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+        body { margin: 0; padding: 0; background: #050505; color: #fff; font-family: monospace; overflow: hidden; position: fixed; width: 100vw; height: 100vh; }
+        #score-board { position: absolute; top: 10px; right: 20px; font-size: 24px; z-index: 10; }
+        #game-canvas { width: 100vw; height: 100vh; display: block; }
+    </style>
+</head>
+<body>
+
+    <div id="score-board"><span id="score">000000</span></div>
+    <canvas id="game-canvas"></canvas>
+
+    <script> // its so weirddd
+        const scoreSpan = document.getElementById('score');
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+
+        let score = 0;
+        let hitObjects = [];
+        let activeCircles = [];
+        let isPlaying = false;
+        let startTime = 0;
+        
+        const APPROACH_TIME = 800; 
+        const CIRCLE_RADIUS = 40;
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        function parseBeatmap(text) {
+            const lines = text.split('\n');
+            const objects = [];
+            let isHitObjectsSection = false;
+            
+            for (let line of lines) {
+                line = line.trim();
+                if (!line) continue;
+                
+                if (line.startsWith('[HitObjects]')) {
+                    isHitObjectsSection = true;
+                    continue;
+                }
+                
+                if (line.startsWith('[') && isHitObjectsSection) {
+                    break;
+                }
+                
+                if (isHitObjectsSection) {
+                    const parts = line.split(',');
+                    if (parts.length >= 3) {
+                        const x = parseFloat(parts[0]);
+                        const y = parseFloat(parts[1]);
+                        const time = parseInt(parts[2]);
+                        
+                        if (!isNaN(x) && !isNaN(y) && !isNaN(time)) {
+                            objects.push({ x, y, time, spawned: false });
+                        }
+                    }
+                }
+            }
+            return objects.sort((a, b) => a.time - b.time);
+        }
+
+        async function initEngine() {
+            try {
+                const response = await fetch('map.osu');
+                if (!response.ok) return;
+                
+                const text = await response.text();
+                hitObjects = parseBeatmap(text);
+                
+                if (hitObjects.length === 0) return;
+                
+                isPlaying = true;
+                startTime = performance.now();
+                gameLoop();
+                
+            } catch (err) {}
+        }
+
+        canvas.addEventListener('touchstart', (e) => {
+            if (!isPlaying) return;
+            e.preventDefault();
+            
+            const touch = e.touches[e.touches.length - 1];
+            const canvasRect = canvas.getBoundingClientRect();
+            
+            const touchX = ((touch.clientX - canvasRect.left) / canvas.width) * 512;
+            const touchY = ((touch.clientY - canvasRect.top) / canvas.height) * 384;
+
+            for (let i = 0; i < activeCircles.length; i++) {
+                const c = activeCircles[i];
+                const dist = Math.hypot(touchX - c.x, touchY - c.y);
+
+                if (dist <= CIRCLE_RADIUS) {
+                    score += 300;
+                    scoreSpan.innerText = String(score).padStart(6, '0');
+                    activeCircles.splice(i, 1);
+                    break;
+                }
+            }
+        });
+
+        function gameLoop() {
+            if (!isPlaying) return;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const gameTime = performance.now() - startTime;
+
+            for (let obj of hitObjects) {
+                if (!obj.spawned && gameTime >= (obj.time - APPROACH_TIME)) {
+                    obj.spawned = true;
+                    activeCircles.push({
+                        x: obj.x,
+                        y: obj.y,
+                        time: obj.time
+                    });
+                }
+            }
+
+            for (let i = activeCircles.length - 1; i >= 0; i--) {
+                const c = activeCircles[i];
+                const timeDelta = c.time - gameTime;
+
+                if (timeDelta < -100) {
+                    activeCircles.splice(i, 1);
+                    continue;
+                }
+
+                const screenX = (c.x / 512) * canvas.width;
+                const screenY = (c.y / 384) * canvas.height;
+                const screenR = (CIRCLE_RADIUS / 512) * canvas.width;
+
+                ctx.beginPath();
+                ctx.arc(screenX, screenY, screenR, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255, 102, 170, 0.7)';
+                ctx.fill();
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = '#fff';
+                ctx.stroke();
+                ctx.closePath();
+
+                if (timeDelta > 0) {
+                    const approachR = screenR * (1 + (timeDelta / APPROACH_TIME) * 2);
+                    ctx.beginPath();
+                    ctx.arc(screenX, screenY, approachR, 0, Math.PI * 2);
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                    ctx.stroke();
+                    ctx.closePath();
+                }
+            }
+
+            if (hitObjects.every(o => o.spawned) && activeCircles.length === 0) {
+                isPlaying = false;
+                return;
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        window.onload = initEngine;
+    </script>
+</body>
+</html>
